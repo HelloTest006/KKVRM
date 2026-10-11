@@ -12,7 +12,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from kkvrm.bones import SPRING, match_humanoid, spring_chains
+from kkvrm.defaults import BUST_LIFT, HEIGHT_MAX, HEIGHT_MIN, SPRINGS_DEFAULT, TARGET_HEIGHT
 from kkvrm.expressions import choose_presets
+from kkvrm.meta import DEFAULTS
 from kkvrm.shaders import bust_clothing, is_eye_card, is_skin, lookup_shader, shader_is_alpha, shader_map
 
 RESULT_PREFIX = "KKVRM_RESULT "
@@ -243,9 +245,9 @@ def world_height(meshes):
 def normalize_height(armature, meshes):
     object_mode()
     height = world_height(meshes)
-    if height <= 0.001 or 1.2 <= height <= 2.0:
+    if height <= 0.001 or HEIGHT_MIN <= height <= HEIGHT_MAX:
         return height
-    factor = 1.6 / height
+    factor = TARGET_HEIGHT / height
     armature.scale = tuple(axis * factor for axis in armature.scale)
     bpy.context.view_layer.update()
     bpy.ops.object.select_all(action="DESELECT")
@@ -265,7 +267,7 @@ def strip_modifiers(meshes):
                 obj.modifiers.remove(modifier)
 
 
-def lift_bust_clothing(meshes, distance=0.006):
+def lift_bust_clothing(meshes, distance=BUST_LIFT):
     if not distance or distance <= 0:
         return
     for obj in meshes:
@@ -540,26 +542,28 @@ def _put(obj, name, value):
 def assign_meta(armature, args):
     meta = armature.data.vrm_addon_extension.vrm1.meta
     info = args.get("meta") or {}
-    _put(meta, "vrm_name", info.get("name") or args.get("name") or "Koikatsu")
-    _put(meta, "version", info.get("version") or "1.0.0")
-    for value in info.get("authors") or ["KKVRM"]:
+    fields = dict(DEFAULTS)
+    fields.update(info)
+    _put(meta, "vrm_name", fields["name"] or args.get("name") or "Koikatsu")
+    _put(meta, "version", fields["version"] or "1.0.0")
+    for value in fields["authors"] or ["KKVRM"]:
         meta.authors.add().value = value
-    _put(meta, "copyright_information", info.get("copyright") or "")
-    _put(meta, "contact_information", info.get("contact") or "")
-    for value in info.get("references") or []:
+    _put(meta, "copyright_information", fields["copyright"])
+    _put(meta, "contact_information", fields["contact"])
+    for value in fields["references"]:
         meta.references.add().value = value
-    _put(meta, "third_party_licenses", info.get("license") or "")
-    _put(meta, "avatar_permission", info.get("avatar_permission") or "onlyAuthor")
-    _put(meta, "allow_excessively_violent_usage", bool(info.get("allow_violent")))
-    _put(meta, "allow_excessively_sexual_usage", bool(info.get("allow_sexual") or args.get("sexual_ok")))
-    _put(meta, "commercial_usage", info.get("commercial_usage") or "personalNonProfit")
-    _put(meta, "allow_political_or_religious_usage", bool(info.get("allow_political")))
-    _put(meta, "allow_antisocial_or_hate_usage", bool(info.get("allow_antisocial")))
-    _put(meta, "credit_notation", info.get("credit") or "required")
-    _put(meta, "allow_redistribution", bool(info.get("allow_redistribution")))
-    _put(meta, "modification", info.get("modification") or "prohibited")
-    _put(meta, "other_license_url", info.get("license_url") or "")
-    thumbnail = info.get("thumbnail") or args.get("thumbnail")
+    _put(meta, "third_party_licenses", fields["license"])
+    _put(meta, "avatar_permission", fields["avatar_permission"])
+    _put(meta, "allow_excessively_violent_usage", bool(fields["allow_violent"]))
+    _put(meta, "allow_excessively_sexual_usage", bool(fields["allow_sexual"] or args.get("sexual_ok")))
+    _put(meta, "commercial_usage", fields["commercial_usage"])
+    _put(meta, "allow_political_or_religious_usage", bool(fields["allow_political"]))
+    _put(meta, "allow_antisocial_or_hate_usage", bool(fields["allow_antisocial"]))
+    _put(meta, "credit_notation", fields["credit"])
+    _put(meta, "allow_redistribution", bool(fields["allow_redistribution"]))
+    _put(meta, "modification", fields["modification"])
+    _put(meta, "other_license_url", fields["license_url"])
+    thumbnail = fields["thumbnail"] or args.get("thumbnail")
     if thumbnail and Path(thumbnail).is_file():
         meta.thumbnail_image = bpy.data.images.load(thumbnail)
     else:
@@ -605,10 +609,10 @@ def main():
         height = normalize_height(armature, meshes)
         strip_modifiers(meshes)
         fix_normals(meshes)
-        lift_bust_clothing(meshes, float(args.get("bust_lift", 0.006)))
+        lift_bust_clothing(meshes, float(args.get("bust_lift", BUST_LIFT)))
         humanoid = assign_humanoid(armature)
         springs = 0
-        if args.get("springs", True):
+        if args.get("springs", SPRINGS_DEFAULT):
             springs = assign_springs(
                 armature,
                 set(humanoid.values()),

@@ -4,6 +4,7 @@ import tempfile
 from pathlib import Path
 
 from .config import find_blender
+from .defaults import BUST_LIFT, BUST_LIFT_MAX, SPRINGS_DEFAULT
 from .locate import character_name
 from .meta import build_meta
 
@@ -30,8 +31,8 @@ def convert(
     folder = Path(folder).resolve()
     output = Path(output).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
-    if bust_lift is not None and not 0 <= float(bust_lift) <= 0.05:
-        raise ValueError("bust-lift must be between 0 and 0.05 meters")
+    if bust_lift is not None and not 0 <= float(bust_lift) <= BUST_LIFT_MAX:
+        raise ValueError(f"bust-lift must be between 0 and {BUST_LIFT_MAX} meters")
     info = build_meta(
         character_name(folder),
         overrides=meta,
@@ -50,8 +51,8 @@ def convert(
         "sexual_ok": bool(info["allow_sexual"]),
         "include_hidden": bool(include_hidden),
         "keep_blend": bool(keep_blend),
-        "bust_lift": 0.006 if bust_lift is None else float(bust_lift),
-        "springs": bool(springs),
+        "bust_lift": BUST_LIFT if bust_lift is None else float(bust_lift),
+        "springs": SPRINGS_DEFAULT if springs is None else bool(springs),
         "package_root": str(Path(__file__).resolve().parent.parent),
     }
     with tempfile.TemporaryDirectory(prefix="kkvrm-") as temp:
