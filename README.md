@@ -23,6 +23,7 @@ python -m kkvrm config --blender "C:\Program Files\Blender Foundation\Blender 5.
 
 ```text
 python -m kkvrm convert "D:\KKS\Export_PMX\20260119_Name" -o Name.vrm
+python -m kkvrm list "D:\KKS\Export_PMX"
 python -m kkvrm inspect "D:\KKS\Export_PMX\20260119_Name"
 ```
 
@@ -38,13 +39,44 @@ A folder that contains several KKBP exports converts each one. Pass `-o` as a di
 python -m kkvrm convert "D:\KKS\Export_PMX" -o "D:\vrms"
 ```
 
+To see what a path would convert, without touching Blender:
+
+```text
+python -m kkvrm list "D:\KKS\Export_PMX"
+```
+
+`inspect` goes further and reads the PMX bones, morphs, and textures.
+
+To check the resolved name, output path, metadata, and the exact Blender command before committing to a long run:
+
+```text
+python -m kkvrm convert "D:\KKS\Export_PMX" --dry-run
+```
+
 Flags:
 
+Output:
+
+- `-o` — output `.vrm`, or a directory when converting several exports
+- `--force` — overwrite the output. Without it an existing `.vrm` is moved to `.bak` and kept
+- `--jobs N` — convert N models at once in a batch. Each one is its own Blender, so keep this low
+- `--name-template` — batch output name pattern. Fields: `{name}`, `{folder}`, `{version}`. Default `{name}`
+- `--dry-run` — print the plan and command, write nothing
+
+Blender and output:
+
+- `--blender` — path to `blender.exe`
+- `--export-root` — folder to search when the card is not inside an export
+- `--verbose` — echo Blender output while converting
+- `--quiet` — drop the log tail from a failure message
+- `--keep-blend` — write a `.blend` next to the `.vrm`
 - `--sfw` — KKBP SFW import
 - `--include-hidden` — export hidden meshes. Hitboxes stay out
-- `--keep-blend` — write a `.blend` next to the `.vrm`
 - `--no-springs` — skip hair, skirt, and bust spring bones
 - `--bust-lift 0.006` — push bust-weighted clothes out, in meters. Default is `0.006`. `--no-bust-lift` disables it
+
+Metadata:
+
 - `--name`, `--author`, `--vrm-version`, `--copyright`, `--contact`, `--reference`, `--thumbnail`
 - `--license`, `--license-url` — third-party license text and URL
 - `--avatar onlyAuthor|onlySeparatelyLicensedPerson|everyone`
@@ -53,7 +85,25 @@ Flags:
 - `--modification prohibited|allowModification|allowModificationRedistribution`
 - `--sexual-ok` / `--no-sexual`, `--violent-ok` / `--no-violent`, `--political-ok` / `--no-political`, `--redistribute` / `--no-redistribute`
 
-`--meta file.json` sets the same fields. Command flags override the file. `--sexual-ok` still forces sexual usage on. Defaults stay author-only, no redistribution, no violent or sexual usage, credit required, modification prohibited.
+### Storing metadata defaults
+
+Store your identity and license once, then reuse it on every convert:
+
+```text
+python -m kkvrm config --author "Mika" --license "Personal use only" --avatar onlyAuthor
+python -m kkvrm config --clear-meta
+python -m kkvrm config  # show everything stored
+```
+
+### Precedence
+
+Metadata is merged in this order, last one wins:
+
+1. built-in defaults
+2. `kkvrm config` stored defaults
+3. `--meta file.json`
+4. command flags
+5. `--sexual-ok`, which still forces sexual usage on regardless
 
 ```json
 {

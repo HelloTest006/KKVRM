@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from kkvrm.meta import build_meta
-from kkvrm.runner import convert
+from kkvrm.runner import convert, resolve_meta
 
 
 class MetaTests(unittest.TestCase):
@@ -62,6 +62,37 @@ class MetaTests(unittest.TestCase):
             build_meta("Mika", overrides={"nope": 1})
         with self.assertRaises(ValueError):
             build_meta("Mika", overrides={"modification": "yes"})
+
+    def test_config_layer_sits_between_defaults_and_file(self):
+        with tempfile.TemporaryDirectory() as temp:
+            meta = Path(temp) / "meta.json"
+            meta.write_text(
+                json.dumps({"authors": ["FromFile"], "license": "file license"}),
+                encoding="utf-8",
+            )
+            config = {"authors": ["FromConfig"], "copyright": "config copyright", "contact": "keep me"}
+            info = build_meta("Mika", overrides={"license": "flag wins"}, meta_file=meta, config_meta=config)
+        self.assertEqual(info["authors"], ["FromFile"])
+        self.assertEqual(info["license"], "flag wins")
+        self.assertEqual(info["copyright"], "config copyright")
+        self.assertEqual(info["contact"], "keep me")
+
+    def test_config_layer_used_without_file(self):
+        info = build_meta("Mika", config_meta={"authors": ["Stored"], "modification": "allowModification"})
+        self.assertEqual(info["authors"], ["Stored"])
+        self.assertEqual(info["modification"], "allowModification")
+        self.assertEqual(info["commercial_usage"], "personalNonProfit")
+
+    def test_sexual_flag_forces_on_over_every_layer(self):
+        info = build_meta("Mika", config_meta={"allow_sexual": False}, sexual_ok=True)
+        self.assertTrue(info["allow_sexual"])
+
+    def test_resolve_meta_uses_folder_name(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp) / "20260905_VKSomi"
+            folder.mkdir()
+            info = resolve_meta(folder)
+        self.assertEqual(info["name"], "VKSomi")
 
     def test_bust_lift_rejected_before_blender(self):
         with tempfile.TemporaryDirectory() as temp:

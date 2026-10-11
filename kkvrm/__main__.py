@@ -139,7 +139,6 @@ def _cmd_list(args):
         found.append((folder, card, game))
     report = [_describe_export(folder, card, _game_for(card, game)) for folder, card, game in found]
     print(json.dumps(report, indent=2))
-    return len(report)
 
 
 def _flag_pair(left, right, message):
@@ -365,7 +364,7 @@ def main(argv=None):
 
     args = parser.parse_args(argv)
     try:
-        args.func(args)
+        return args.func(args) or 0
     except (CardError, FileNotFoundError, RuntimeError, PmxError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
