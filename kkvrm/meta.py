@@ -154,11 +154,13 @@ def load_meta_file(path):
     return data
 
 
-def build_meta(name, overrides=None, meta_file=None, sexual_ok=False):
+def build_meta(name, overrides=None, meta_file=None, sexual_ok=False, config_meta=None):
+    """Layer metadata: defaults, then stored config, then a file, then flags."""
     merged = dict(DEFAULTS)
     merged["authors"] = list(DEFAULTS["authors"])
     merged["references"] = []
     merged["name"] = (name or "Koikatsu").strip() or "Koikatsu"
+    _apply(merged, config_meta)
     if meta_file:
         _apply(merged, load_meta_file(meta_file))
     _apply(merged, overrides)
