@@ -46,6 +46,20 @@ class LocateTests(unittest.TestCase):
             self.assertEqual(found_card, card.resolve())
             self.assertEqual(game, "sunshine")
 
+    def test_returned_folder_is_fully_resolved(self):
+        with tempfile.TemporaryDirectory() as temp:
+            card = Path(temp) / "card.png"
+            payload = b"PNG KoiKatuCharaSun payload"
+            card.write_bytes(payload)
+            export_root = Path(temp) / "Export_PMX"
+            folder = export_root / "20260202_Mika"
+            folder.mkdir(parents=True)
+            (folder / "body.pmx").write_bytes(b"PMX ")
+            (folder / "copied.png").write_bytes(payload)
+            found_folder, _card, _game = resolve_input(card, export_root=export_root)
+            self.assertEqual(found_folder, Path(found_folder).resolve())
+            self.assertNotIn("~", str(found_folder))
+
     def test_missing_export(self):
         with tempfile.TemporaryDirectory() as temp:
             card = Path(temp) / "card.png"

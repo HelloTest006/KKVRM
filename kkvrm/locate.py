@@ -145,4 +145,4 @@ def resolve_input(source, export_root=None):
             game = identify_path(card)
         except CardError:
             game = None
-    return folder, card, game
+    return Path(folder).resolve(), card, game
