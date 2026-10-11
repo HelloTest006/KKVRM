@@ -1,0 +1,2 @@
+[console_scripts]
+kkvrm = kkvrm.__main__:main
