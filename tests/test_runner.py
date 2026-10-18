@@ -76,7 +76,7 @@ class RunnerTests(unittest.TestCase):
                     result = convert(folder, target)
             self.assertEqual(target.with_name("out.vrm.bak").read_bytes(), b"previous")
             self.assertEqual(target.read_bytes(), vrm_bytes())
-            self.assertEqual(result["output"], str(target))
+            self.assertEqual(result["output"], str(target.resolve()))
 
     def test_timeout_preserves_partial_log(self):
         with tempfile.TemporaryDirectory() as temp:

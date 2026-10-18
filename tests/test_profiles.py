@@ -30,7 +30,7 @@ class ProfileTests(unittest.TestCase):
             result = resolve_settings(folder, profile=str(profile), stored={"meta": {"authors": ["Stored"]}},
                                       meta={"authors": ["Flags"]}, overrides={"physics": {"types": {"cloth": False}}})
         self.assertEqual(result["meta"]["authors"], ["Flags"])
-        self.assertEqual(result["meta"]["thumbnail"], str(root / "thumbnail.png"))
+        self.assertEqual(result["meta"]["thumbnail"], str((root / "thumbnail.png").resolve()))
         self.assertFalse(result["options"]["physics"]["types"]["hair"])
         self.assertFalse(result["options"]["physics"]["types"]["cloth"])
         self.assertEqual(result["options"]["height"], "keep")
