@@ -3,6 +3,11 @@ __pycache__/
 .venv/
 *.vrm
 *.blend
+*.blend1
+*.blend.bak
+*.blend.json
+*.vrm.bak
+*.report.json
 *.log
 kkvrm_baked/
 build/

@@ -1,6 +1,11 @@
 import argparse
+import fnmatch
+import hashlib
+import io
 import json
+import re
 import sys
+import time
 import traceback
 from pathlib import Path
 
@@ -11,13 +16,24 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from kkvrm.bones import SPRING, match_humanoid, spring_chains
+from kkvrm.bones import REQUIRED, match_humanoid
+from kkvrm.blender_physics import apply_physics, inventory
+from kkvrm.blender_project import environment, environment_identity, load_prepared, read_project, save_prepared, usable_cache
 from kkvrm.defaults import BUST_LIFT, HEIGHT_MAX, HEIGHT_MIN, SPRINGS_DEFAULT, TARGET_HEIGHT
-from kkvrm.expressions import choose_presets
+from kkvrm.expressions import PRESETS as EXPRESSION_PRESETS, choose_presets
 from kkvrm.meta import DEFAULTS
+from kkvrm.locate import find_card
+from kkvrm.options import validate_options
+from kkvrm.physics import plan_physics
+from kkvrm.physics_sources import load_sources
 from kkvrm.shaders import bust_clothing, is_eye_card, is_skin, lookup_shader, shader_is_alpha, shader_map
 
 RESULT_PREFIX = "KKVRM_RESULT "
+STARTED = time.monotonic()
+
+
+def progress(stage):
+    print("KKVRM_PROGRESS " + json.dumps({"stage": stage, "elapsed_seconds": round(time.monotonic() - STARTED, 3)}), flush=True)
 
 
 def emit(payload):
@@ -76,7 +92,7 @@ def enable(module_names, installed):
     return None
 
 
-def enable_required():
+def enable_required(required=True):
     installed = installed_modules()
     found = {
         "mmd_tools": enable(
@@ -93,7 +109,7 @@ def enable_required():
         ),
     }
     missing = [name for name, module in found.items() if not module]
-    if missing:
+    if missing and required:
         known = sorted(name for name in installed if any(part in name for part in ("kkbp", "mmd", "vrm")))
         fail(
             "Blender is missing add-ons: "
@@ -101,7 +117,8 @@ def enable_required():
             + ". Install KKBP Importer, mmd_tools, and the VRM add-on, then enable them. Found: "
             + (", ".join(known) or "none")
         )
-    silence_console(found["kkbp"])
+    if found["kkbp"]:
+        silence_console(found["kkbp"])
     return found
 
 
@@ -202,17 +219,19 @@ def choose_armature():
         fail("KKBP import created no armature")
 
     def score(obj):
-        names = {bone.name for bone in obj.data.bones}
-        return int("Hips" in names) + int("Head" in names) + int("Left arm" in names)
+        found, missing = match_humanoid(bone.name for bone in obj.data.bones)
+        return len(REQUIRED) - len(missing), len(found)
 
     armatures.sort(key=score, reverse=True)
-    if score(armatures[0]) == 0:
+    if score(armatures[0])[0] == 0:
         fail("armature has no KKBP humanoid bones")
     return armatures[0]
 
 
-def collect_meshes(armature, include_hidden):
+def collect_meshes(armature, include_hidden, options=None):
+    options = options or {}
     meshes = []
+    seen_outfits = set()
     for obj in bpy.data.objects:
         if obj.type != "MESH" or not attached(obj, armature):
             continue
@@ -223,7 +242,18 @@ def collect_meshes(armature, include_hidden):
         if not in_view_layer(obj):
             print(f"skip {obj.name}: hidden collection")
             continue
+        match = re.search(r"outfit\s+(\d+)", obj.name, re.IGNORECASE)
+        if match:
+            seen_outfits.add(int(match.group(1)))
+            if options.get("outfit") is not None and int(match.group(1)) != options["outfit"]:
+                continue
+        if options.get("include_mesh") and not any(fnmatch.fnmatchcase(obj.name.lower(), pattern.lower()) for pattern in options["include_mesh"]):
+            continue
+        if any(fnmatch.fnmatchcase(obj.name.lower(), pattern.lower()) for pattern in options.get("exclude_mesh", [])):
+            continue
         meshes.append(obj)
+    if options.get("outfit") is not None and seen_outfits and options["outfit"] not in seen_outfits:
+        fail(f"outfit {options['outfit']} not found; available: {sorted(seen_outfits)}")
     if not meshes:
         fail("no meshes to export")
     return meshes
@@ -242,12 +272,12 @@ def world_height(meshes):
     return high - low
 
 
-def normalize_height(armature, meshes):
+def normalize_height(armature, meshes, policy="auto"):
     object_mode()
     height = world_height(meshes)
-    if height <= 0.001 or HEIGHT_MIN <= height <= HEIGHT_MAX:
+    if height <= 0.001 or policy == "keep" or (policy == "auto" and HEIGHT_MIN <= height <= HEIGHT_MAX):
         return height
-    factor = TARGET_HEIGHT / height
+    factor = (TARGET_HEIGHT if policy == "auto" else float(policy)) / height
     armature.scale = tuple(axis * factor for axis in armature.scale)
     bpy.context.view_layer.update()
     bpy.ops.object.select_all(action="DESELECT")
@@ -267,9 +297,12 @@ def strip_modifiers(meshes):
                 obj.modifiers.remove(modifier)
 
 
-def lift_bust_clothing(meshes, distance=BUST_LIFT):
+def lift_bust_clothing(meshes, distance=BUST_LIFT, material_patterns=()):
+    import numpy
+
+    corrections = []
     if not distance or distance <= 0:
-        return
+        return corrections
     for obj in meshes:
         if not bust_clothing(obj.name):
             continue
@@ -282,14 +315,50 @@ def lift_bust_clothing(meshes, distance=BUST_LIFT):
             continue
         mesh = obj.data
         mesh.update()
+        normals = [vertex.normal.copy() for vertex in mesh.vertices]
+        allowed = set()
+        for polygon in mesh.polygons:
+            material = obj.material_slots[polygon.material_index].material if polygon.material_index < len(obj.material_slots) else None
+            if material is None or is_skin(material.name) or is_eye_card(material.name):
+                continue
+            if not material_patterns or any(fnmatch.fnmatchcase(material.name.lower(), pattern.lower()) for pattern in material_patterns):
+                allowed.update(polygon.vertices)
+        inverse = obj.matrix_world.to_3x3().inverted()
+        normal_transform = inverse.transposed()
+        moved = 0
+        offsets = numpy.zeros((len(mesh.vertices), 3), dtype=numpy.float32)
         for vert in mesh.vertices:
+            if vert.index not in allowed:
+                continue
             weight = 0.0
             for element in vert.groups:
                 if element.group in groups:
                     weight += element.weight
             if weight > 0.15:
-                vert.co += vert.normal * distance * min(weight, 1.0)
+                world_normal = normal_transform @ normals[vert.index]
+                if world_normal.length < 1e-6:
+                    continue
+                delta = inverse @ (world_normal.normalized() * distance * min(weight, 1.0))
+                offsets[vert.index] = delta
+                moved += 1
+        if moved:
+            indices = numpy.flatnonzero(numpy.any(offsets != 0, axis=1))
+            coordinates = numpy.empty(len(mesh.vertices) * 3, dtype=numpy.float32)
+            if mesh.shape_keys:
+                for block in mesh.shape_keys.key_blocks:
+                    block.data.foreach_get("co", coordinates)
+                    coordinates.reshape((-1, 3))[indices] += offsets[indices]
+                    block.data.foreach_set("co", coordinates)
+                mesh.shape_keys.key_blocks[0].data.foreach_get("co", coordinates)
+            else:
+                mesh.vertices.foreach_get("co", coordinates)
+                coordinates.reshape((-1, 3))[indices] += offsets[indices]
+            mesh.vertices.foreach_set("co", coordinates)
         mesh.update()
+        if moved:
+            corrections.append({"mesh": obj.name, "vertices": moved, "offset_meters": distance,
+                                "shape_keys_updated": len(mesh.shape_keys.key_blocks) if mesh.shape_keys else 0})
+    return corrections
 
 
 def fix_normals(meshes):
@@ -297,23 +366,20 @@ def fix_normals(meshes):
     for obj in meshes:
         if not in_view_layer(obj):
             continue
+        if not obj.data.has_custom_normals:
+            obj.data.polygons.foreach_set("use_smooth", [True] * len(obj.data.polygons))
+            continue
         bpy.ops.object.select_all(action="DESELECT")
         obj.select_set(True)
         bpy.context.view_layer.objects.active = obj
         try:
-            bpy.ops.object.mode_set(mode="EDIT")
-            bpy.ops.mesh.select_all(action="SELECT")
-            try:
-                bpy.ops.mesh.customdata_custom_splitnormals_clear()
-            except Exception:
-                pass
-            bpy.ops.object.mode_set(mode="OBJECT")
+            # This operator polls in OBJECT mode; EDIT mode silently failed before.
+            bpy.ops.mesh.customdata_custom_splitnormals_clear()
         except Exception as exc:
             print(f"normals skip {obj.name}: {exc}")
             object_mode()
             continue
-        for poly in obj.data.polygons:
-            poly.use_smooth = True
+        obj.data.polygons.foreach_set("use_smooth", [True] * len(obj.data.polygons))
 
 
 def assign_humanoid(armature):
@@ -329,34 +395,11 @@ def assign_humanoid(armature):
     if missing:
         fail("missing required bones: " + ", ".join(missing))
     for slot, bone_name in found.items():
-        getattr(human_bones, slot).node.bone_name = bone_name
+        node = getattr(human_bones, slot).node
+        if node.bone_name != bone_name:
+            node.bone_name = bone_name
     extension.vrm1.look_at.type = "bone"
     return found
-
-
-def assign_springs(armature, used_bones, centers):
-    pairs = [
-        (bone.name, bone.parent.name if bone.parent else None) for bone in armature.data.bones
-    ]
-    count = 0
-    extension = armature.data.vrm_addon_extension
-    for index, (kind, chain) in enumerate(spring_chains(pairs, skip=used_bones)):
-        settings = SPRING[kind]
-        spring = extension.spring_bone1.springs.add()
-        spring.vrm_name = f"{kind}_{index}"
-        center_name = centers.get(kind) if isinstance(centers, dict) else centers
-        if center_name:
-            spring.center.bone_name = center_name
-        for bone_name in chain:
-            joint = spring.joints.add()
-            joint.node.bone_name = bone_name
-            joint.hit_radius = settings["hit_radius"]
-            joint.stiffness = settings["stiffness"]
-            joint.gravity_power = settings["gravity_power"]
-            joint.gravity_dir = (0.0, 0.0, -1.0)
-            joint.drag_force = settings["drag_force"]
-        count += 1
-    return count
 
 
 def usable_image(image):
@@ -428,19 +471,63 @@ def load_srgb(path):
     return image
 
 
-def assign_materials(meshes, folder):
-    shaders = shader_map(folder)
+def prepare_images(meshes, folder, sources, writable_folder=None):
+    shaders = sources.get("shaders", {})
+    prepared = set()
+    for obj in meshes:
+        for slot in obj.material_slots:
+            material = slot.material
+            if material is None or material.name in prepared:
+                continue
+            prepared.add(material.name)
+            light = image_from_node(material, "_light.png") or bpy.data.images.get(material.get("kkvrm_light_image", ""))
+            path = image_file(light)
+            shader = lookup_shader(material.name, material.get("id"), shaders)
+            mode = material.get("kkvrm_default_alpha_mode") or ("BLEND" if is_eye_card(material.name) else "OPAQUE" if is_skin(material.name) else \
+                "MASK" if path is not None and (shader_is_alpha(shader) or texture_has_cutout(path)) else "OPAQUE")
+            material["kkvrm_default_alpha_mode"] = mode
+            if light:
+                material["kkvrm_light_image"] = light.name
+            mask = bpy.data.images.get(material.get("kkvrm_mask_image", ""))
+            if mode == "MASK" and mask:
+                mask.use_fake_user = True
+            elif mode == "MASK" and light:
+                digest = hashlib.sha256(material.name.encode()).hexdigest()[:8]
+                destination = (Path(writable_folder) / "textures" if writable_folder else Path(folder) / "kkvrm_baked") / f"{safe_name(material.name)}_{digest}_cloth.png"
+                try:
+                    source = io.BytesIO(bytes(light.packed_file.data)) if light.packed_file else path
+                    if source is None:
+                        raise ValueError("no source bytes for alpha cleanup")
+                    cleaned = solidify_cloth_alpha(source, destination)
+                    mask = load_srgb(cleaned)
+                    mask.use_fake_user = True
+                    material["kkvrm_mask_image"] = mask.name
+                except Exception as exc:
+                    sources.setdefault("warnings", []).append(f"alpha cleanup skipped for {material.name}: {exc}")
+
+
+def assign_materials(meshes, folder, options=None, sources=None):
+    options, sources = options or {}, sources or {}
+    shaders = sources.get("shaders") or shader_map(folder)
     done = {}
     for obj in meshes:
         for slot in obj.material_slots:
             material = slot.material
             if material is None or material.name in done:
                 continue
-            light = image_from_node(material, "_light.png")
+            light = image_from_node(material, "_light.png") or bpy.data.images.get(material.get("kkvrm_light_image", ""))
             base_image = light
             light_path = image_file(light)
             shader = lookup_shader(material.name, material.get("id"), shaders)
-            if is_eye_card(material.name):
+            overrides = {}
+            for pattern, value in options.get("material_overrides", {}).items():
+                if fnmatch.fnmatchcase(material.name.lower(), pattern.lower()):
+                    overrides.update(value)
+            if material.get("kkvrm_default_alpha_mode"):
+                mode = material["kkvrm_default_alpha_mode"]
+                cutoff = 0.5 if mode in ("BLEND", "MASK") else 1.0
+                sided = True
+            elif is_eye_card(material.name):
                 mode = "BLEND"
                 cutoff = 0.5
                 sided = True
@@ -449,12 +536,6 @@ def assign_materials(meshes, folder):
                 cutoff = 1.0
                 sided = True
             elif light_path is not None and (shader_is_alpha(shader) or texture_has_cutout(light_path)):
-                dest = Path(folder) / "kkvrm_baked" / (safe_name(material.name) + "_cloth.png")
-                try:
-                    cleaned = solidify_cloth_alpha(light_path, dest)
-                    base_image = load_srgb(cleaned)
-                except Exception as exc:
-                    print(f"cloth alpha skip {material.name}: {exc}")
                 mode = "MASK"
                 cutoff = 0.5
                 sided = True
@@ -462,6 +543,11 @@ def assign_materials(meshes, folder):
                 mode = "OPAQUE"
                 cutoff = 1.0
                 sided = True
+            mode = overrides.get("alpha_mode", mode)
+            cutoff = float(overrides.get("alpha_cutoff", cutoff))
+            sided = overrides.get("double_sided", sided)
+            if mode == "MASK":
+                base_image = bpy.data.images.get(material.get("kkvrm_mask_image", "")) or base_image
             mtoon = material.vrm_addon_extension.mtoon1
             mtoon.enabled = True
             gltf = mtoon
@@ -482,7 +568,8 @@ def assign_materials(meshes, folder):
             gltf.alpha_mode = mode
             gltf.alpha_cutoff = cutoff
             gltf.double_sided = sided
-            done[material.name] = mode
+            done[material.name] = {"alpha_mode": mode, "alpha_cutoff": cutoff, "double_sided": sided,
+                                   "texture": base_image.name if base_image else None, "shader": shader}
     return done
 
 
@@ -494,7 +581,8 @@ def reset_shape_keys(meshes):
         if shape_keys.animation_data:
             shape_keys.animation_data_clear()
         for block in shape_keys.key_blocks:
-            block.value = 0.0
+            if block.value != 0:
+                block.value = 0.0
         obj.active_shape_key_index = 0
 
 
@@ -511,6 +599,11 @@ def assign_expressions(armature, meshes):
             grouped.setdefault(block.name, []).append(obj)
     chosen = choose_presets(grouped)
     expressions = armature.data.vrm_addon_extension.vrm1.expressions
+    expressions.custom.clear()
+    for name in EXPRESSION_PRESETS + ("neutral", "look_up", "look_down", "look_left", "look_right"):
+        expression = getattr(expressions.preset, name, None)
+        if expression:
+            expression.morph_target_binds.clear()
     presets = 0
     custom = 0
     seen_custom = {}
@@ -534,6 +627,34 @@ def assign_expressions(armature, meshes):
     return {"shape_keys": len(grouped), "preset_binds": presets, "custom": custom}
 
 
+def expression_signature(meshes):
+    names = [(obj.name, [block.name for block in obj.data.shape_keys.key_blocks])
+             for obj in meshes if obj.data.shape_keys]
+    return hashlib.sha256(json.dumps(sorted(names), ensure_ascii=False).encode()).hexdigest()
+
+
+def restore_thumbnail(project, args):
+    image = bpy.data.images.get(project.get("thumbnail_image") or "")
+    explicit = args.get("meta", {}).get("thumbnail") or args.get("thumbnail")
+    if explicit and Path(explicit).is_file():
+        image = bpy.data.images.load(explicit, check_existing=True)
+    if image is None and project.get("thumbnail_image"):
+        name = re.sub(r"\.\d{3}$", "", project["thumbnail_image"])
+        candidate = Path(project["import_dir"]) / name
+        if candidate.is_file():
+            image = bpy.data.images.load(str(candidate), check_existing=True)
+        elif not project["settings"]["meta"].get("thumbnail") and Path(project["import_dir"]).is_dir():
+            card = find_card(project["import_dir"])
+            if card:
+                image = bpy.data.images.load(str(card), check_existing=True)
+    if image:
+        image.use_fake_user = True
+        project["thumbnail_image"] = image.name
+    elif project.get("thumbnail_image"):
+        project["sources"].setdefault("warnings", []).append("prepared thumbnail is unavailable; regenerate the packed snapshot")
+    args["packed_thumbnail"] = project.get("thumbnail_image")
+
+
 def _put(obj, name, value):
     if hasattr(obj, name):
         setattr(obj, name, value)
@@ -546,6 +667,8 @@ def assign_meta(armature, args):
     fields.update(info)
     _put(meta, "vrm_name", fields["name"] or args.get("name") or "Koikatsu")
     _put(meta, "version", fields["version"] or "1.0.0")
+    meta.authors.clear()
+    meta.references.clear()
     for value in fields["authors"] or ["KKVRM"]:
         meta.authors.add().value = value
     _put(meta, "copyright_information", fields["copyright"])
@@ -566,6 +689,8 @@ def assign_meta(armature, args):
     thumbnail = fields["thumbnail"] or args.get("thumbnail")
     if thumbnail and Path(thumbnail).is_file():
         meta.thumbnail_image = bpy.data.images.load(thumbnail)
+    elif args.get("packed_thumbnail") and bpy.data.images.get(args["packed_thumbnail"]):
+        meta.thumbnail_image = bpy.data.images[args["packed_thumbnail"]]
     else:
         meta.thumbnail_image = bpy.data.images.new("kkvrm_thumb", 32, 32, alpha=True)
 
@@ -600,35 +725,122 @@ def export_vrm(armature, meshes, args):
 def main():
     args = parse_args()
     try:
-        enable_required()
-        import_character(args)
-        prepped = prep_character()
+        action = args.get("action", "convert")
+        progress("Checking Blender extensions")
+        found = enable_required(required=action != "check")
+        current_environment = environment(found)
+        if action == "check":
+            emit(dict(current_environment, ok=not current_environment["issues"]))
+            return
+        if current_environment["issues"]:
+            fail("; ".join(current_environment["issues"]))
+        project, cache_hit = None, False
+        cache_path = args.get("cache_path")
+        if action in ("reexport", "describe"):
+            progress("Opening prepared model")
+            project = load_prepared(args["blend_input"])
+        elif cache_path and usable_cache(cache_path, args.get("cache_key"), current_environment):
+            progress("Loading prepared cache")
+            project = load_prepared(cache_path)
+            cache_hit = True
+        if action == "describe":
+            emit({"ok": True, "project": read_project()})
+            return
+        options = validate_options(args.get("options") or {
+            "sfw": bool(args.get("sfw")), "include_hidden": bool(args.get("include_hidden")),
+            "keep_blend": bool(args.get("keep_blend")), "bust_lift": args.get("bust_lift", BUST_LIFT),
+        })
+        if not args.get("springs", True):
+            options["physics"]["types"] = {kind: False for kind in options["physics"]["types"]}
+        if project is None:
+            progress("Importing KKBP character")
+            import_character(dict(args, sfw=options["sfw"]))
+            progress("Preparing humanoid rig")
+            prepped = prep_character()
+            sources = load_sources(args["import_dir"])
+            sources["shaders"] = shader_map(args["import_dir"])
+            if not prepped:
+                sources["warnings"].append("KKBP prep did not finish; rig/physics coverage requires review")
+        else:
+            prepped = project["prepped"]
+            sources = project["sources"]
+            args["import_dir"] = project["import_dir"]
+            args["packed_thumbnail"] = project.get("thumbnail_image")
+            if project["environment"] != environment_identity(current_environment):
+                sources.setdefault("warnings", []).append("prepared model was created with different Blender/extension versions")
         object_mode()
         armature = choose_armature()
-        meshes = collect_meshes(armature, bool(args.get("include_hidden")))
-        height = normalize_height(armature, meshes)
+        meshes = collect_meshes(armature, options["include_hidden"], options)
+        if action == "inspect":
+            humanoid = assign_humanoid(armature)
+            records, weights, _points = inventory(armature, meshes, sources)
+            physics = plan_physics(records, options["physics"], sources, humanoid, weights, options["outfit"])
+            for chain in physics["chains"]:
+                chain.pop("data", None)
+            emit({"ok": True, "prepped": prepped, "environment": current_environment,
+                  "height": world_height(meshes), "humanoid": humanoid, "physics": physics,
+                  "meshes": [obj.name for obj in meshes]})
+            return
+        if project is None:
+            progress("Preparing texture images")
+            all_meshes = collect_meshes(armature, True)
+            prepare_images(all_meshes, Path(args["import_dir"]), sources)
+            thumbnail = args.get("thumbnail") or args.get("meta", {}).get("thumbnail")
+            thumbnail_image = bpy.data.images.load(thumbnail, check_existing=True) if thumbnail and Path(thumbnail).is_file() else None
+            if thumbnail_image:
+                thumbnail_image.use_fake_user = True
+            project = {"schema_version": 1, "phase": "prepared", "prepped": prepped,
+                       "import_dir": args["import_dir"], "sources": sources,
+                       "environment": environment_identity(current_environment),
+                       "thumbnail_image": thumbnail_image.name if thumbnail_image else None,
+                       "settings": {"schema_version": 1, "options": options,
+                                    "meta": args.get("meta") or dict(DEFAULTS, name=args.get("name", "Koikatsu"))},
+                       "cache_key": args.get("cache_key")}
+        else:
+            # Repair pre-fake-user snapshots without depending on external texture paths.
+            prepare_images(collect_meshes(armature, True), Path(args["import_dir"]), sources,
+                           writable_folder=Path(args["output"]).parent)
+        restore_thumbnail(project, args)
+        progress("Preparing reusable normals and expressions")
+        all_meshes = collect_meshes(armature, True)
+        fix_normals(all_meshes)
+        humanoid = assign_humanoid(armature)
+        signature = expression_signature(meshes)
+        if project.get("expression_signature") != signature:
+            project["expressions"] = assign_expressions(armature, meshes)
+            project["expression_signature"] = signature
+        expressions = project["expressions"]
+        if options["keep_blend"] or (cache_path and not cache_hit):
+            progress("Saving packed prepared model")
+            snapshot = dict(project, settings={"schema_version": 1, "options": options, "meta": args["meta"]})
+            thumbnail = args.get("meta", {}).get("thumbnail") or args.get("thumbnail")
+            if thumbnail and Path(thumbnail).is_file():
+                image = bpy.data.images.load(thumbnail, check_existing=True)
+                image.use_fake_user = True
+                snapshot["thumbnail_image"] = image.name
+                project["thumbnail_image"] = snapshot["thumbnail_image"]
+            if cache_path and not cache_hit:
+                save_prepared(cache_path, snapshot)
+            if options["keep_blend"]:
+                save_prepared(Path(args["output"]).with_suffix(".blend"), snapshot)
+        args["packed_thumbnail"] = project.get("thumbnail_image")
+        reset_shape_keys(meshes)
+        progress("Applying geometry and scale options")
+        original_height = world_height(meshes)
+        height = normalize_height(armature, meshes, options["height"])
+        scale_factor = height / original_height if original_height > 0.001 else 1.0
         strip_modifiers(meshes)
         fix_normals(meshes)
-        lift_bust_clothing(meshes, float(args.get("bust_lift", BUST_LIFT)))
+        corrections = lift_bust_clothing(meshes, options["bust_lift"], options["bust_materials"])
         humanoid = assign_humanoid(armature)
-        springs = 0
-        if args.get("springs", SPRINGS_DEFAULT):
-            springs = assign_springs(
-                armature,
-                set(humanoid.values()),
-                {
-                    "bust": humanoid.get("chest") or humanoid.get("upper_chest") or humanoid.get("hips"),
-                    "hair": humanoid.get("head") or humanoid.get("hips"),
-                    "skirt": humanoid.get("hips"),
-                },
-            )
-        materials = assign_materials(meshes, Path(args["import_dir"]))
-        expressions = assign_expressions(armature, meshes)
+        progress("Building spring chains and colliders")
+        physics = apply_physics(armature, meshes, options["physics"], sources, humanoid,
+                                scale_factor=scale_factor, height=height, outfit=options["outfit"])
+        progress("Assigning MToon materials and expressions")
+        materials = assign_materials(meshes, Path(args["import_dir"]), options, sources)
         assign_meta(armature, args)
+        progress("Exporting VRM 1.0")
         export_vrm(armature, meshes, args)
-        if args.get("keep_blend"):
-            blend = str(Path(args["output"]).with_suffix(".blend"))
-            bpy.ops.wm.save_as_mainfile(filepath=blend)
         emit(
             {
                 "ok": True,
@@ -636,10 +848,19 @@ def main():
                 "height": height,
                 "prepped": prepped,
                 "bones": len(humanoid),
-                "springs": springs,
+                "springs": len(physics["chains"]),
+                "physics": physics,
+                "colliders": physics["collider_count"],
                 "materials": len(materials),
+                "material_details": materials,
                 "expressions": expressions,
                 "meshes": [obj.name for obj in meshes],
+                "corrections": corrections,
+                "source_height": original_height,
+                "scale_factor": scale_factor,
+                "cache_hit": cache_hit,
+                "cache_path": cache_path,
+                "environment": current_environment,
             }
         )
     except SystemExit:

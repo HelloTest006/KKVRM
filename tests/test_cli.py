@@ -50,7 +50,7 @@ class CliTests(unittest.TestCase):
             self.assertTrue(keyword["dry_run"])
             self.assertEqual(Path(calls[0][0][1]).name, "VKSomi.vrm")
 
-    def test_existing_output_is_backed_up_unless_force(self):
+    def test_cli_defers_output_replacement_to_runner(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             folder = make_export(root, "20260905_VKSomi")
@@ -62,8 +62,8 @@ class CliTests(unittest.TestCase):
                     with mock.patch("kkvrm.__main__.convert", side_effect=lambda *a, **k: {"output": str(a[1])}):
                         with mock.patch("sys.stderr"), mock.patch("sys.stdout"):
                             main(["convert", str(folder), "-o", str(target)])
-            self.assertEqual((root / "VKSomi.vrm.bak").read_text(), "old")
-            self.assertFalse(target.exists())
+            self.assertFalse((root / "VKSomi.vrm.bak").exists())
+            self.assertEqual(target.read_text(), "old")
             target.write_text("newer")
             with mock.patch("kkvrm.__main__.load", return_value={}):
                 with mock.patch("kkvrm.__main__.resolve_input", return_value=(folder, card, "sunshine")):
@@ -119,6 +119,8 @@ class CliTests(unittest.TestCase):
                     with mock.patch("kkvrm.__main__.convert", side_effect=lambda f, o, **k: outputs.append(Path(o)) or {"output": str(o)}):
                         with mock.patch("sys.stderr"), mock.patch("sys.stdout"):
                             main(["convert", str(folder), "--name-template", "{folder}--v{version}", "--vrm-version", "2.0.0"])
+            self.assertEqual(outputs[0].name, "20260905_VKSomi--v2.0.0.vrm")
+
     def test_template_characters_are_sanitized(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

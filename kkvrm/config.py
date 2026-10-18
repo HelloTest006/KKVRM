@@ -1,6 +1,7 @@
-import json
 import os
 from pathlib import Path
+
+from .jsonio import read_object, write_object
 
 
 def config_path():
@@ -14,21 +15,18 @@ def load():
     path = config_path()
     if not path.is_file():
         return {}
-    with path.open("r", encoding="utf-8") as handle:
-        data = json.load(handle)
-    if not isinstance(data, dict):
-        return {}
-    return data
+    return read_object(path)
 
 
 def save(updates):
     path = config_path()
     data = load()
-    data.update({key: value for key, value in updates.items() if value is not None})
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        json.dump(data, handle, indent=2)
-    return path
+    for key, value in updates.items():
+        if value is None:
+            data.pop(key, None)
+        else:
+            data[key] = value
+    return write_object(path, data)
 
 
 def resolve_blender(path):

@@ -8,6 +8,7 @@ CREDIT = ("required", "unnecessary")
 MODIFICATION = ("prohibited", "allowModification", "allowModificationRedistribution")
 
 DEFAULTS = {
+    "name": "Koikatsu",
     "version": "1.0.0",
     "authors": ["KKVRM"],
     "copyright": "",
@@ -138,19 +139,17 @@ def _apply(merged, raw):
 
 
 def load_meta_file(path):
-    path = Path(path)
+    path = Path(path).expanduser().resolve()
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
     except json.JSONDecodeError as exc:
         raise ValueError(f"invalid metadata JSON: {path}: {exc}") from exc
     if not isinstance(data, dict):
         raise ValueError(f"metadata file must be a JSON object: {path}")
-    thumb = data.get("thumbnail") or data.get("thumbnailImage")
-    if isinstance(thumb, str) and thumb and not Path(thumb).is_file():
-        candidate = path.parent / thumb
-        if candidate.is_file():
-            data = dict(data)
-            data["thumbnail"] = str(candidate.resolve())
+    for key in ("thumbnail", "thumbnailImage"):
+        thumb = data.get(key)
+        if isinstance(thumb, str) and thumb:
+            data[key] = str((path.parent / Path(thumb).expanduser()).resolve())
     return data
 
 
