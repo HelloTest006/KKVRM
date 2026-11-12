@@ -146,7 +146,7 @@ class RunnerPipelineTests(unittest.TestCase):
                     with self.assertRaises(RuntimeError) as caught:
                         convert(folder, target, quiet=True)
                 self.assertIn(expected, str(caught.exception))
-                self.assertIn(str(target.with_suffix(".log")), str(caught.exception))
+                self.assertIn(str(target.resolve().with_suffix(".log")), str(caught.exception))
                 self.assertFalse(target.exists())
 
     def test_cache_payload_and_cache_dir_inside_export_is_reported(self):
