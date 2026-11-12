@@ -32,7 +32,3 @@ jobs:
 
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
-
-  # Requires a local Blender with KKBP, mmd_tools and the VRM add-on, plus a
-  # real character export. GitHub runners cannot install the KKBP importer, so
-  # this job is opt-in: run it locally with the commands in README.md.
