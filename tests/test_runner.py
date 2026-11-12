@@ -1,26 +1,13 @@
+import _isolation  # noqa: F401  (must precede kkvrm imports)
 import json
-import struct
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from kkvrm.bones import REQUIRED
 from kkvrm.runner import RESULT_PREFIX, _run, convert, plan
-
-
-def vrm_bytes():
-    slots = sorted(REQUIRED)
-    human = {}
-    for index, slot in enumerate(slots):
-        parts = slot.split("_")
-        human[parts[0] + "".join(part.title() for part in parts[1:])] = {"node": index}
-    document = {"asset": {"version": "2.0"}, "nodes": [{"name": slot} for slot in slots],
-                "extensions": {"VRMC_vrm": {"specVersion": "1.0", "humanoid": {"humanBones": human}}}}
-    chunk = json.dumps(document).encode()
-    chunk += b" " * (-len(chunk) % 4)
-    return struct.pack("<4sII", b"glTF", 2, len(chunk) + 20) + struct.pack("<I4s", len(chunk), b"JSON") + chunk
+from _fixtures import vrm_bytes
 
 
 class RunnerTests(unittest.TestCase):

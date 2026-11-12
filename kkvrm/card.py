@@ -27,9 +27,6 @@ def identify(data):
             return "sunshine"
     if KOIKATSU in blob:
         return "koikatsu"
-    for marker, game in REJECT:
-        if marker in blob:
-            raise CardError(f"{game} card, not Koikatsu Sunshine")
     raise CardError("not a Koikatsu card")
 
 

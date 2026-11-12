@@ -1,3 +1,4 @@
+import _isolation  # noqa: F401  (must precede kkvrm imports)
 import struct
 import unittest
 

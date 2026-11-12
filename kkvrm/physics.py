@@ -25,6 +25,19 @@ def on_off(value):
     raise ValueError("physics switches must be on/off or true/false")
 
 
+def finite_number(value, field):
+    """Accept a real number or numeric string; reject booleans, null and containers."""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise ValueError(f"{field} must be a number, not {value!r}")
+    try:
+        number = float(value)
+    except ValueError as exc:
+        raise ValueError(f"{field} must be a number, not {value!r}") from exc
+    if not math.isfinite(number):
+        raise ValueError(f"{field} must be finite")
+    return number
+
+
 def validate_settings(raw):
     if not isinstance(raw, dict) or set(raw) - SETTING_KEYS:
         raise ValueError(f"spring settings support: {', '.join(sorted(SETTING_KEYS))}")
@@ -33,16 +46,14 @@ def validate_settings(raw):
         if key == "gravity_dir":
             if not isinstance(value, (list, tuple)) or len(value) != 3:
                 raise ValueError("gravity_dir must have three components in Blender Z-up coordinates")
-            vector = [float(component) for component in value]
-            if not all(math.isfinite(component) for component in vector):
-                raise ValueError("gravity_dir must be finite")
+            vector = [finite_number(component, "gravity_dir") for component in value]
             length = math.sqrt(sum(component * component for component in vector))
             if length < 1e-8:
                 raise ValueError("gravity_dir cannot be zero")
             result[key] = [component / length for component in vector]
         else:
-            number = float(value)
-            if not math.isfinite(number) or number < 0 or (key == "drag_force" and number > 1):
+            number = finite_number(value, key)
+            if number < 0 or (key == "drag_force" and number > 1):
                 raise ValueError(f"invalid {key}: {value}")
             result[key] = number
     return result
@@ -260,7 +271,7 @@ def plan_physics(records, config=None, sources=None, humanoid=None, weighted=Non
         kind, chain = candidate["category"], list(candidate["bones"])
         label = candidate.get("name") or (chain[0] if chain and chain[0] else "unknown")
 
-        def skip(reason):
+        def skip(reason, label=label, kind=kind):
             skipped.append({"name": label, "category": kind, "reason": reason})
 
         if not config["types"][kind]:
@@ -317,9 +328,9 @@ def plan_physics(records, config=None, sources=None, humanoid=None, weighted=Non
             joint.update(config["joint_settings"].get(name, {}))
             joint.update(candidate.get("joint_settings", {}).get(name, {}))
             joint_settings.append(joint)
-        final_label = f"{kind}_{label}"
-        if final_label in used_labels:
-            final_label += f"_{len(planned)}"
+        final_label, suffix = f"{kind}_{label}", len(planned)
+        while final_label in used_labels:
+            final_label, suffix = f"{kind}_{label}_{suffix}", suffix + 1
         used_labels.add(final_label)
         planned.append({"name": final_label, "category": kind, "bones": chain, "center": center,
                         "settings": joint_settings, "source": candidate["source"],

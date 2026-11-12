@@ -19,6 +19,11 @@ def vector(value, default=(0.0, 0.0, 0.0)):
     return result if all(math.isfinite(item) for item in result) else list(default)
 
 
+def string_list(value):
+    """Return the string entries of a sidecar list; anything else is treated as empty."""
+    return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
+
+
 def renderer_category(renderer):
     name = (str(renderer.get("SMRName", "")) + " " + str(renderer.get("SMRPath", ""))).lower()
     if "ct_hair" in name or "hair" in str(renderer.get("SMRName", "")).lower():
@@ -82,7 +87,7 @@ def load_sources(folder):
         coordinate = item.get("CoordinateType")
         related = [renderer for renderer in renderers
                    if renderer.get("CoordinateType") in (coordinate, -1, None)
-                   and root in (renderer.get("SMRBoneNames") or [])]
+                   and root in string_list(renderer.get("SMRBoneNames"))]
         category, evidence = classify_source(root, related)
         particle_names = item.get("ParticleBones") or [root]
         if not isinstance(particle_names, list):
@@ -92,20 +97,17 @@ def load_sources(folder):
             enabled = float(item.get("Weight", 1)) > 0
         except (ValueError, TypeError):
             enabled = False
-        names = [name for name in particle_names if isinstance(name, str) and name and name != "NULL"]
-        if root not in names:
-            names.insert(0, root)
-        exclusions = item.get("Exclusions") or []
-        exclusions = [name for name in exclusions if isinstance(name, str)] if isinstance(exclusions, list) else []
+        bones = [name for name in particle_names if isinstance(name, str) and name and name != "NULL"]
+        if root not in bones:
+            bones.insert(0, root)
         dynamics.append({
             "name": root, "root": root, "category": category, "evidence": evidence,
-            "coordinate": coordinate, "bones": list(dict.fromkeys(names)),
-            "exclusions": exclusions, "enabled": enabled,
+            "coordinate": coordinate, "bones": list(dict.fromkeys(bones)),
+            "exclusions": string_list(item.get("Exclusions")), "enabled": enabled,
             "renderers": [renderer.get("SMRName", "") for renderer in related],
             "materials": list(dict.fromkeys(name for renderer in related
-                                             for name in renderer.get("SMRMaterialNames", []) if isinstance(name, str))),
-            "colliders": [name for name in item.get("Colliders", []) if isinstance(name, str)]
-                         if isinstance(item.get("Colliders", []), list) else [],
+                                             for name in string_list(renderer.get("SMRMaterialNames")))),
+            "colliders": string_list(item.get("Colliders")),
             "data": item,
         })
     transforms = {}

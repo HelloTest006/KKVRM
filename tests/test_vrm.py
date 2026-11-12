@@ -1,9 +1,10 @@
+import _isolation  # noqa: F401  (must precede kkvrm imports)
 import tempfile
 import unittest
 from pathlib import Path
 
 from kkvrm.vrm import audit, audit_document
-from test_runner import vrm_bytes
+from _fixtures import vrm_bytes
 
 
 class VrmTests(unittest.TestCase):

@@ -72,7 +72,7 @@ def locked(path, timeout=60):
                 break
             except OSError:
                 if time.monotonic() - started >= timeout:
-                    raise RuntimeError(f"prepared cache is in use: {path}; retry or use --no-cache")
+                    raise RuntimeError(f"prepared cache is in use: {path}; retry or use --no-cache") from None
                 time.sleep(0.1)
         try:
             handle.seek(0)

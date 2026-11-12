@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 
 from .jsonio import read_object, write_object
@@ -29,6 +30,16 @@ def save(updates):
     return write_object(path, data)
 
 
+def version_key(path):
+    """Order paths so embedded version numbers compare numerically (4.10 > 4.9)."""
+    return [(0, int(part), "") if part.isdigit() else (1, 0, part.casefold())
+            for part in re.split(r"(\d+)", str(path)) if part]
+
+
+def newest(paths):
+    return max(paths, key=version_key, default=None)
+
+
 def resolve_blender(path):
     path = Path(path).expanduser()
     if path.is_file():
@@ -39,10 +50,7 @@ def resolve_blender(path):
         candidate = path / name
         if candidate.is_file():
             return candidate
-    nested = sorted(path.glob("*/blender.exe"))
-    if nested:
-        return nested[0]
-    return None
+    return newest(path.glob("*/blender.exe"))
 
 
 def find_blender(explicit=None):
@@ -79,9 +87,9 @@ def find_blender(explicit=None):
     for root in roots:
         if not root.is_dir():
             continue
-        found = sorted(root.glob("**/blender.exe"), reverse=True)
+        found = newest(root.glob("**/blender.exe"))
         if found:
-            return found[0]
+            return found
     raise FileNotFoundError(
         "blender.exe not found. Install Blender 5.2 or set it with: kkvrm config --blender PATH"
     )

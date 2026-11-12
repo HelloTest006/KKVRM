@@ -1,3 +1,4 @@
+import _isolation  # noqa: F401  (must precede kkvrm imports)
 import tempfile
 import unittest
 from pathlib import Path

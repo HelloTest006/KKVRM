@@ -24,13 +24,14 @@ def safe_stem(text, fallback="model"):
 
 
 def format_stem(template, **fields):
-    for _literal, field, spec, conversion in string.Formatter().parse(template):
+    try:
+        parsed = list(string.Formatter().parse(template))
+    except ValueError as exc:
+        raise ValueError(f"invalid name-template: {exc}") from exc
+    for _literal, field, spec, conversion in parsed:
         if field is not None and (field not in {"name", "folder", "version"} or spec or conversion):
             raise ValueError("name-template only supports {name}, {folder}, and {version}")
-    try:
-        return safe_stem(template.format(**fields), fallback=fields.get("folder", "model"))
-    except (ValueError, KeyError) as exc:
-        raise ValueError(f"invalid name-template: {exc}") from exc
+    return safe_stem(template.format(**fields), fallback=fields.get("folder", "model"))
 
 
 def backup_path(path):
@@ -63,10 +64,3 @@ def publish_output(staged, target, force=False):
             os.replace(backup, target)
         raise
     return backup
-
-
-def prepare_output(path):
-    """Back up an existing file and make sure the parent directory exists."""
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return backup_existing(path)

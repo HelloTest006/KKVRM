@@ -154,7 +154,8 @@ def _cmd_config(args):
         updates["options"] = merged
     if args.profile:
         load_profile(args.profile)
-        updates["default_profile"] = args.profile
+        path = Path(args.profile).expanduser()
+        updates["default_profile"] = str(path.resolve()) if path.is_file() else args.profile
     if args.clear_meta:
         updates["meta"] = None
     if args.clear_options:

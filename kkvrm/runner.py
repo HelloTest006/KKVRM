@@ -146,7 +146,7 @@ def _execute(job, timeout, verbose, quiet, force, report, cache_root=None):
         if report:
             write_object(target.with_suffix(".report.json"), result)
         return result
-    except (RuntimeError, OSError, KeyboardInterrupt) as exc:
+    except (RuntimeError, OSError, ValueError, KeyboardInterrupt) as exc:
         if report:
             write_object(target.with_suffix(".report.json"), {
                 "ok": False, "output": str(target), "error": str(exc) or "cancelled",
@@ -178,7 +178,13 @@ def reexport(blend, output, blender=None, options=None, meta_info=None, provenan
     if options is not None and options.get("sfw", False) != project["settings"]["options"].get("sfw", False):
         raise ValueError("SFW is an import-time option; convert the original export again to change it")
     folder = project.get("import_dir") or Path(blend).parent
-    info = meta_info or project["settings"]["meta"]
+    info = meta_info
+    if info is None:
+        # Snapshots may hold partial metadata or a thumbnail path that only exists packed.
+        stored = dict(project["settings"].get("meta") or {})
+        if stored.get("thumbnail") and not Path(stored["thumbnail"]).is_file():
+            stored["thumbnail"] = ""
+        info = build_meta(stored.get("name"), overrides=stored)
     job = plan(folder, output, blender=blender, meta_info=info,
                options=options or project["settings"]["options"], provenance=provenance,
                require_blender=not dry_run, blend_input=blend)

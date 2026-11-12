@@ -1,8 +1,7 @@
 import copy
-import math
 
 from .defaults import BUST_LIFT, BUST_LIFT_MAX
-from .physics import merge_config, normalize_config
+from .physics import finite_number, merge_config, normalize_config
 
 
 DEFAULTS = {
@@ -35,17 +34,17 @@ def validate_options(raw):
     for field in ("sfw", "include_hidden", "keep_blend", "cache"):
         if not isinstance(result[field], bool):
             raise ValueError(f"{field} must be true or false")
-    lift = float(result["bust_lift"])
-    if not math.isfinite(lift) or not 0 <= lift <= BUST_LIFT_MAX:
+    lift = finite_number(result["bust_lift"], "bust_lift")
+    if not 0 <= lift <= BUST_LIFT_MAX:
         raise ValueError(f"bust_lift must be between 0 and {BUST_LIFT_MAX} meters")
     result["bust_lift"] = lift
     height = result["height"]
     if height not in ("auto", "keep"):
         try:
-            height = float(height)
-        except (ValueError, TypeError) as exc:
+            height = finite_number(height, "height")
+        except ValueError as exc:
             raise ValueError("height must be auto, keep, or a height in meters") from exc
-        if not math.isfinite(height) or not 0 < height <= 10:
+        if not 0 < height <= 10:
             raise ValueError("target height must be between 0 and 10 meters")
     result["height"] = height
     outfit = result["outfit"]
@@ -63,7 +62,7 @@ def validate_options(raw):
             raise ValueError(f"unsupported material override fields: {pattern}")
         if "alpha_mode" in material and material["alpha_mode"] not in ("OPAQUE", "MASK", "BLEND"):
             raise ValueError(f"invalid alpha_mode: {pattern}")
-        if "alpha_cutoff" in material and (not math.isfinite(float(material["alpha_cutoff"])) or not 0 <= float(material["alpha_cutoff"]) <= 1):
+        if "alpha_cutoff" in material and not 0 <= finite_number(material["alpha_cutoff"], f"alpha_cutoff for {pattern}") <= 1:
             raise ValueError(f"invalid alpha_cutoff: {pattern}")
         if "double_sided" in material and not isinstance(material["double_sided"], bool):
             raise ValueError(f"double_sided must be true or false: {pattern}")

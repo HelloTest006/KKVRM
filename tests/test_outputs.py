@@ -1,8 +1,9 @@
+import _isolation  # noqa: F401  (must precede kkvrm imports)
 import tempfile
 import unittest
 from pathlib import Path
 
-from kkvrm.outputs import backup_existing, backup_path, prepare_output, safe_stem
+from kkvrm.outputs import backup_existing, backup_path, safe_stem
 
 
 class SafeStemTests(unittest.TestCase):
@@ -52,14 +53,6 @@ class BackupTests(unittest.TestCase):
             backup = backup_existing(target)
             self.assertEqual(backup.read_text(), "current")
             self.assertFalse((Path(temp) / "out.vrm.bak.bak").exists())
-
-    def test_prepare_output_creates_the_parent_directory(self):
-        with tempfile.TemporaryDirectory() as temp:
-            target = Path(temp) / "nested" / "deeper" / "out.vrm"
-            self.assertIsNone(prepare_output(target))
-            self.assertTrue(target.parent.is_dir())
-            target.write_text("v1")
-            self.assertEqual(backup_existing(target).read_text(), "v1")
 
 
 if __name__ == "__main__":

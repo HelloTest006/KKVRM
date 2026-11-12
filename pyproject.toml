@@ -14,3 +14,24 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["kkvrm*"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 160
+
+[tool.ruff.lint]
+# Pyflakes, syntax errors, bugbear and pylint errors: the rules that find real defects.
+select = ["F", "E9", "B", "PLE"]
+# zip() over neighbouring pairs (seq, seq[1:]) is intentionally unequal in length.
+ignore = ["B905"]
+
+[tool.coverage.run]
+branch = true
+source = ["kkvrm"]
+# These modules import bpy and run only inside Blender (see tests/blender_checks.py).
+omit = ["kkvrm/export_vrm.py", "kkvrm/blender_physics.py", "kkvrm/blender_project.py"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = true

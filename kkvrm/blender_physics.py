@@ -1,13 +1,12 @@
 """Apply a validated spring plan to the VRM add-on; all geometry uses metric Z-up."""
 
-import fnmatch
 import math
 
 import bpy
 from mathutils import Euler, Matrix, Vector
 
 from .physics import CATEGORIES, plan_physics
-from .physics_sources import renderer_category, vector
+from .physics_sources import renderer_category, string_list, vector
 from .shaders import is_eye_card, is_skin
 
 
@@ -50,7 +49,7 @@ def _material_kinds(material, sources):
         return {"hair", "accessory"}
     matched = set()
     for renderer in sources.get("renderers", []):
-        materials = renderer.get("SMRMaterialNames", [])
+        materials = string_list(renderer.get("SMRMaterialNames"))
         if original in materials or any(name in (item, "KK " + item, "KKS " + item) for item in materials):
             category = renderer_category(renderer)
             if category:

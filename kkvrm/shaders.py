@@ -37,8 +37,8 @@ def shader_map(folder):
         paths.append(complete)
     for path in paths:
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError):
             continue
         if not isinstance(data, list):
             continue

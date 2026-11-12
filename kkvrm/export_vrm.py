@@ -19,7 +19,7 @@ if str(ROOT) not in sys.path:
 from kkvrm.bones import REQUIRED, match_humanoid
 from kkvrm.blender_physics import apply_physics, inventory
 from kkvrm.blender_project import environment, environment_identity, load_prepared, read_project, save_prepared, usable_cache
-from kkvrm.defaults import BUST_LIFT, HEIGHT_MAX, HEIGHT_MIN, SPRINGS_DEFAULT, TARGET_HEIGHT
+from kkvrm.defaults import BUST_LIFT, HEIGHT_MAX, HEIGHT_MIN, TARGET_HEIGHT
 from kkvrm.expressions import PRESETS as EXPRESSION_PRESETS, choose_presets
 from kkvrm.meta import DEFAULTS
 from kkvrm.locate import find_card

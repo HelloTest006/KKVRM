@@ -1,6 +1,7 @@
+import _isolation  # noqa: F401  (must precede kkvrm imports)
 import unittest
 
-from kkvrm.bones import match_humanoid, spring_chains, spring_kind
+from kkvrm.bones import match_humanoid, spring_kind
 from kkvrm.expressions import choose_presets, classify
 
 
@@ -131,33 +132,12 @@ class BoneTests(unittest.TestCase):
         self.assertEqual(found["hips"], "cf_j_waist01")
         self.assertEqual(found["left_hand"], "cf_j_hand_L")
 
-    def test_spring_chains(self):
-        bones = [
-            ("Hips", None),
-            ("cf_j_hair_01", "Head"),
-            ("cf_j_hair_02", "cf_j_hair_01"),
-            ("cf_j_hair_03", "cf_j_hair_02"),
-            ("cf_j_hair_a", "Head"),
-            ("cf_j_hair_a1", "cf_j_hair_a"),
-            ("cf_j_hair_a2", "cf_j_hair_a"),
-            ("cf_j_sk_00_00", "Hips"),
-            ("cf_j_sk_00_01", "cf_j_sk_00_00"),
-            ("cf_j_bust01_L", "Chest"),
-            ("cf_j_bust02_L", "cf_j_bust01_L"),
-            ("cf_j_bust03_L", "cf_j_bust02_L"),
-            ("cf_d_bust_L", "Chest"),
-        ]
-        chains = spring_chains(bones, skip={"Hips"})
-        hair = [chain for kind, chain in chains if kind == "hair"]
-        skirt = [chain for kind, chain in chains if kind == "skirt"]
-        bust = [chain for kind, chain in chains if kind == "bust"]
-        self.assertEqual(hair, [
-            ["cf_j_hair_01", "cf_j_hair_02", "cf_j_hair_03"],
-            ["cf_j_hair_a", "cf_j_hair_a1"],
-            ["cf_j_hair_a", "cf_j_hair_a2"],
-        ])
-        self.assertEqual(skirt, [["cf_j_sk_00_00", "cf_j_sk_00_01"]])
-        self.assertEqual(bust, [["cf_j_bust02_L", "cf_j_bust03_L"]])
+    def test_spring_kind(self):
+        self.assertEqual(spring_kind("cf_J_hairB_01"), "hair")
+        self.assertEqual(spring_kind("cf_d_hair_front"), "hair")
+        self.assertEqual(spring_kind("cf_j_sk_00_00"), "skirt")
+        self.assertEqual(spring_kind("cf_j_bust02_L"), "bust")
+        self.assertIsNone(spring_kind("cf_j_spine01"))
         self.assertIsNone(spring_kind("cf_j_bust01_L"))
         self.assertIsNone(spring_kind("cf_d_bust_L"))
         self.assertIsNone(spring_kind("cf_s_bust_L"))

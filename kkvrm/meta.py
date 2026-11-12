@@ -1,5 +1,6 @@
-import json
 from pathlib import Path
+
+from .jsonio import read_object
 
 
 AVATAR = ("onlyAuthor", "onlySeparatelyLicensedPerson", "everyone")
@@ -129,6 +130,8 @@ def _apply(merged, raw):
                 choices = ", ".join(ENUMS[dest])
                 raise ValueError(f"{dest} must be one of: {choices}")
             merged[dest] = value
+        elif isinstance(value, bool) or not isinstance(value, (str, int, float)):
+            raise ValueError(f"{dest} must be text, not {value!r}")
         elif dest == "name":
             text = str(value).strip()
             if not text:
@@ -140,12 +143,7 @@ def _apply(merged, raw):
 
 def load_meta_file(path):
     path = Path(path).expanduser().resolve()
-    try:
-        data = json.loads(path.read_text(encoding="utf-8-sig"))
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"invalid metadata JSON: {path}: {exc}") from exc
-    if not isinstance(data, dict):
-        raise ValueError(f"metadata file must be a JSON object: {path}")
+    data = read_object(path)
     for key in ("thumbnail", "thumbnailImage"):
         thumb = data.get(key)
         if isinstance(thumb, str) and thumb:

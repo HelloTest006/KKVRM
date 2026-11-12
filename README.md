@@ -184,11 +184,13 @@ Blender writes to a temporary target. Only a completed, validated VRM replaces t
 
 ```text
 python -m unittest discover -s tests
+python -m ruff check kkvrm tests
+python -X dev -W error -m coverage run -m unittest discover -s tests && python -m coverage report
 blender --background --python-exit-code 1 --python tests/blender_checks.py
 python tests/verify_artifacts.py New.vrm --baseline Previous.vrm
 ```
 
-CI runs host tests on Windows/Python 3.10–3.14, including CLI packaging checks and a syntax pass over the Blender-only modules and scripts. Physics coverage includes chain splitting, branch handling, category and preset resolution, per-joint settings, weight-based candidate filtering, source sidecar parsing, endpoint creation, exclusions, and spring/collider VRM validation. `tests/blender_checks.py` covers metric offsets, morph deltas, normal cleanup, endpoints and auto/source colliders; `tests/blender_portability.py` re-packs cleaned alpha textures and the portrait after the original export paths are removed. Both need a local Blender with the three add-ons.
+CI runs host tests on Windows/Python 3.10–3.14 with warnings treated as errors, lints with ruff, and fails if branch coverage of the host modules drops below 80%. It also checks CLI packaging and compiles the Blender-only modules and scripts. Tests never read your real configuration: `tests/_isolation.py` redirects `%APPDATA%`/`%LOCALAPPDATA%` to a temporary folder. `tests/test_pipeline.py` drives the real runner against a fake Blender subprocess (progress, validation, publishing, reports, cache payload, re-export dry-run), and `tests/test_robustness.py` fuzzes the PMX parser, VRM audit and settings validators with corrupt input. Physics coverage includes chain splitting, branch handling, category and preset resolution, per-joint settings, weight-based candidate filtering, source sidecar parsing, endpoint creation, exclusions, and spring/collider VRM validation. `tests/blender_checks.py` covers metric offsets, morph deltas, normal cleanup, endpoints and auto/source colliders; `tests/blender_portability.py` re-packs cleaned alpha textures and the portrait after the original export paths are removed. Both need a local Blender with the three add-ons.
 
 Artifact checks (`tests/verify_artifacts.py`) compare embedded texture pixels, transparency, UVs, rest geometry and morph counts. Physics integration was exercised in three-vrm 3.5.5 over 360 animated frames. Unity/UniVRM visual validation remains a manual runtime check.
 
